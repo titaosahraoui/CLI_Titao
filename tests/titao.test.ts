@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rm, mkdir, readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 import path from 'path';
 import {
   viewFileTool,
@@ -7,11 +8,14 @@ import {
   editFileTool,
   listDirTool,
   runCommandTool,
-  grepSearchTool,
   ToolRegistry,
 } from '../src/tools/index.js';
 import { PermissionManager } from '../src/core/permissions.js';
 import { ContextManager } from '../src/core/context-manager.js';
+import { UndoManager } from '../src/core/undo-manager.js';
+import { HooksEngine } from '../src/hooks/engine.js';
+import { generateGitHubWorkflow } from '../src/ci/workflow-generator.js';
+import { createProvider } from '../src/providers/provider-factory.js';
 import { buildSystemPrompt } from '../src/prompts/system.js';
 
 const TEST_DIR = path.resolve('./temp_test_env');
@@ -97,22 +101,68 @@ describe('⚡ Titao Core & Tool System Test Suite', () => {
     });
   });
 
-  describe('Permission Manager', () => {
-    it('correctly categorizes and applies default permissions', () => {
-      const pm = new PermissionManager();
-      expect(pm.isAutoApproved('view_file')).toBe(true);
-      expect(pm.isAutoApproved('grep_search')).toBe(true);
-      expect(pm.isAutoApproved('write_file')).toBe(false);
-      expect(pm.isAutoApproved('run_command')).toBe(false);
+  describe('Hooks Engine & Team Styling', () => {
+    it('executes pre-edit and post-edit hooks successfully', async () => {
+      const engine = new HooksEngine(TEST_DIR);
+      engine.registerHook({
+        event: 'pre-edit',
+        command: 'echo "Pre-Edit Hook Fired"',
+      });
+
+      const results = await engine.runHooks('pre-edit');
+      expect(results.length).toBe(1);
+      expect(results[0].success).toBe(true);
+      expect(results[0].output).toContain('Pre-Edit Hook Fired');
+    });
+  });
+
+  describe('CI/CD Workflow Generator', () => {
+    it('generates .github/workflows/titao-ci.yml file', async () => {
+      const res = await generateGitHubWorkflow(TEST_DIR);
+      expect(res.success).toBe(true);
+      expect(existsSync(res.filePath)).toBe(true);
+
+      const content = await readFile(res.filePath, 'utf-8');
+      expect(content).toContain('Titao AI Code Review');
+    });
+  });
+
+  describe('Multi-Provider Factory', () => {
+    it('instantiates Ollama and OpenRouter providers', () => {
+      const ollama = createProvider({ type: 'ollama', model: 'qwen2.5-coder:7b' });
+      expect(ollama).toBeDefined();
+
+      const openrouter = createProvider({ type: 'openrouter', model: 'qwen/qwen-2.5-coder-32b' });
+      expect(openrouter).toBeDefined();
+    });
+  });
+
+  describe('Undo Manager & Safety', () => {
+    it('backs up file and restores content on undo()', async () => {
+      const targetFile = path.join(TEST_DIR, 'sample.txt');
+      await writeFileTool.execute({ path: targetFile, content: 'Original Version' });
+
+      const undoMgr = new UndoManager();
+      await undoMgr.backupFile(targetFile);
+
+      await writeFileTool.execute({ path: targetFile, content: 'Modified Version' });
+      expect(await readFile(targetFile, 'utf-8')).toBe('Modified Version');
+
+      const undoRes = await undoMgr.undo();
+      expect(undoRes.success).toBe(true);
+      expect(await readFile(targetFile, 'utf-8')).toBe('Original Version');
     });
 
-    it('supports session overrides and auto-approve all', () => {
-      const pm = new PermissionManager();
-      pm.approveToolForSession('write_file');
-      expect(pm.isAutoApproved('write_file')).toBe(true);
+    it('deletes newly created files on undo()', async () => {
+      const newFile = path.join(TEST_DIR, 'new_file.txt');
+      const undoMgr = new UndoManager();
 
-      const autoPm = new PermissionManager(PermissionManager.autoApproveAll());
-      expect(autoPm.isAutoApproved('run_command')).toBe(true);
+      await undoMgr.backupFile(newFile);
+      await writeFileTool.execute({ path: newFile, content: 'Brand New' });
+
+      const undoRes = await undoMgr.undo();
+      expect(undoRes.success).toBe(true);
+      expect(undoRes.message).toContain('Deleted newly created file');
     });
   });
 

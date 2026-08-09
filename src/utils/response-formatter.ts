@@ -71,9 +71,11 @@ export function parseThinkingBlocks(rawText: string): ParsedResponse {
 }
 
 /**
- * Format thinking steps nicely for terminal display (Claude Code / Antigravity style).
+ * Format thinking steps matching Antigravity CLI / Gemini CLI style:
+ * ▸ Thought for 1s
+ *   Short summary...
  */
-export function formatThinkingUI(thinkingText: string): string {
+export function formatThinkingUI(thinkingText: string, durationSec = 1): string {
   const lines = thinkingText
     .split('\n')
     .map((l) => l.trim())
@@ -81,29 +83,74 @@ export function formatThinkingUI(thinkingText: string): string {
 
   if (lines.length === 0) return '';
 
-  const formattedLines = lines
-    .map((line) => `     ${chalk.dim('│')} ${chalk.dim.italic(line)}`)
-    .join('\n');
+  const summary = lines[0] ?? 'Analyzing request...';
 
-  return `\n  ${chalk.magenta('💭 Thinking:')}\n${formattedLines}\n`;
+  return `\n  ${chalk.dim('▸')} ${chalk.bold.magenta(`Thought for ${durationSec}s`)}\n    ${chalk.dim(summary)}\n`;
 }
 
 /**
- * Format tool call invocation header for terminal display.
+ * Format tool call invocation header matching Antigravity CLI / Gemini CLI style:
+ * ● Create(src/path.ts)
+ * ● Bash(node scripts/publish.js)
+ * ● Edit(src/app.ts)
+ * ● View(src/core/config.ts)
  */
 export function formatToolCallUI(name: string, args: Record<string, unknown>): string {
-  const argPairs = Object.entries(args)
-    .map(([k, v]) => {
-      const valStr = typeof v === 'string' ? `"${v}"` : JSON.stringify(v);
-      return `${chalk.dim(k)}: ${chalk.cyan(valStr)}`;
-    })
-    .join(', ');
+  let actionName = 'Tool';
+  let mainArg = '';
 
-  return `\n  ${chalk.cyan('⚙')} ${chalk.bold.cyan(name)}${chalk.dim('(')}${argPairs}${chalk.dim(')')}`;
+  switch (name) {
+    case 'write_file':
+      actionName = 'Create';
+      mainArg = String(args.path ?? '');
+      break;
+    case 'edit_file':
+      actionName = 'Edit';
+      mainArg = String(args.path ?? '');
+      break;
+    case 'view_file':
+      actionName = 'View';
+      mainArg = String(args.path ?? '');
+      break;
+    case 'run_command':
+      actionName = 'Bash';
+      mainArg = String(args.command ?? '');
+      break;
+    case 'list_dir':
+      actionName = 'List';
+      mainArg = String(args.path ?? '.');
+      break;
+    case 'grep_search':
+    case 'semantic_search':
+      actionName = 'Search';
+      mainArg = String(args.query ?? '');
+      break;
+    case 'git_status':
+      actionName = 'GitStatus';
+      mainArg = '';
+      break;
+    case 'git_diff':
+      actionName = 'GitDiff';
+      mainArg = String(args.path ?? '');
+      break;
+    case 'git_commit':
+      actionName = 'GitCommit';
+      mainArg = String(args.message ?? '');
+      break;
+    default:
+      actionName = name.charAt(0).toUpperCase() + name.slice(1);
+      mainArg = Object.values(args)[0] ? String(Object.values(args)[0]) : '';
+  }
+
+  const bullet = chalk.cyan('●');
+  const actionStyled = chalk.cyan.bold(actionName);
+  const targetStyled = chalk.dim(`(${mainArg})`);
+
+  return `\n  ${bullet} ${actionStyled}${targetStyled}`;
 }
 
 /**
- * Format tool result output.
+ * Format tool result output cleanly.
  */
 export function formatToolResultUI(name: string, output: string, success: boolean): string {
   if (!success) {
@@ -111,10 +158,9 @@ export function formatToolResultUI(name: string, output: string, success: boolea
   }
 
   const lines = output.trim().split('\n');
-  const summary =
-    lines.length > 8
-      ? lines.slice(0, 8).join('\n  │ ') + `\n  │ ${chalk.dim(`... (${lines.length - 8} more lines)`)}`
-      : lines.join('\n  │ ');
+  if (lines.length <= 3) {
+    return `  ${chalk.dim('└─')} ${chalk.dim(lines.join(' '))}`;
+  }
 
-  return `  ${chalk.green('✓')} ${chalk.dim(`[${name}]`)}\n  │ ${chalk.dim(summary)}`;
+  return `  ${chalk.dim(`└─ ${lines[0]} (+${lines.length - 1} more lines)`)}`;
 }

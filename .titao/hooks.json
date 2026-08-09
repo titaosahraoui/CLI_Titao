@@ -1,0 +1,19 @@
+{
+  "hooks": [
+    {
+      "event": "pre-edit",
+      "command": "npm run build",
+      "enabled": true
+    },
+    {
+      "event": "post-edit",
+      "command": "npx prettier --write src/",
+      "enabled": true
+    },
+    {
+      "event": "pre-commit",
+      "command": "npx vitest run",
+      "enabled": true
+    }
+  ]
+}

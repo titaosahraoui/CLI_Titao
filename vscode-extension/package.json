@@ -1,0 +1,26 @@
+{
+  "name": "titao-vscode",
+  "displayName": "⚡ Titao CLI Coding Agent",
+  "description": "Run Titao local AI coding agent natively in VS Code terminal",
+  "version": "0.1.0",
+  "publisher": "titao",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:titao.open"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "titao.open",
+        "title": "⚡ Launch Titao Agent"
+      }
+    ]
+  }
+}

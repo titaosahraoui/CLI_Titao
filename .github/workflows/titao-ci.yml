@@ -1,0 +1,32 @@
+# ⚡ Titao CI/CD Automated PR Review Workflow
+name: Titao AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  titao-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Ollama & Titao
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 5
+          ollama pull qwen2.5-coder:7b
+          npm install -g titao
+
+      - name: Run Titao PR Code Review
+        run: |
+          titao -p "Review all git uncommitted/branch changes and generate PR feedback" --auto-approve

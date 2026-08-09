@@ -5,3 +5,5 @@ export { PermissionManager, DEFAULT_PERMISSION_POLICY } from './permissions.js';
 export type { PermissionLevel, PermissionPolicy } from './permissions.js';
 export { DEFAULT_CONFIG, resolveConfig, loadProjectMemory } from './config.js';
 export type { TitaoConfig } from './config.js';
+export { UndoManager } from './undo-manager.js';
+export type { FileSnapshot } from './undo-manager.js';

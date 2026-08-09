@@ -1,7 +1,9 @@
+import path from 'path';
 import type { LLMProvider, Message, ToolCall } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ContextManager } from './context-manager.js';
 import type { PermissionManager } from './permissions.js';
+import type { UndoManager } from './undo-manager.js';
 import { parseToolCallsFromText } from '../providers/tool-call-parser.js';
 
 /** Callbacks for the agent loop to communicate with the UI. */
@@ -25,6 +27,7 @@ export interface AgentLoopOptions {
   tools: ToolRegistry;
   context: ContextManager;
   permissions: PermissionManager;
+  undoManager?: UndoManager;
   maxTurns: number;
   callbacks: AgentCallbacks;
 }
@@ -42,6 +45,7 @@ export class AgentLoop {
   private tools: ToolRegistry;
   private context: ContextManager;
   private permissions: PermissionManager;
+  private undoManager?: UndoManager;
   private maxTurns: number;
   private callbacks: AgentCallbacks;
   private isRunning = false;
@@ -51,6 +55,7 @@ export class AgentLoop {
     this.tools = options.tools;
     this.context = options.context;
     this.permissions = options.permissions;
+    this.undoManager = options.undoManager;
     this.maxTurns = options.maxTurns;
     this.callbacks = options.callbacks;
   }
@@ -63,12 +68,18 @@ export class AgentLoop {
     this.context.addMessage({ role: 'user', content: userMessage });
 
     let turnCount = 0;
+    const executedToolSignatures = new Set<string>();
+    const modifiedFiles = new Set<string>();
 
     while (this.isRunning && turnCount < this.maxTurns) {
       turnCount++;
 
       // 1. Assemble messages with context budget
       const messages = this.context.assembleMessages();
+
+      // Track prompt token usage accurately via BPE tokenizer
+      const promptTokens = this.context.countMessageArrayTokens(messages);
+      this.context.updateTokenUsage({ promptTokens, completionTokens: 0 });
 
       // 2. Call LLM with streaming
       let responseText = '';
@@ -94,8 +105,9 @@ export class AgentLoop {
               }
               break;
             case 'done':
-              if (chunk.usage) {
-                this.context.updateTokenUsage(chunk.usage);
+              // If LLM API returned usage stats, update them
+              if (chunk.usage && chunk.usage.completionTokens) {
+                this.context.updateTokenUsage({ promptTokens: 0, completionTokens: chunk.usage.completionTokens });
               }
               break;
             case 'error':
@@ -111,6 +123,10 @@ export class AgentLoop {
         this.isRunning = false;
         return;
       }
+
+      // Track completion tokens accurately via BPE tokenizer
+      const completionTokens = this.context.estimateTokens(responseText);
+      this.context.updateTokenUsage({ promptTokens: 0, completionTokens });
 
       // 2b. Fallback parsing: if model output raw tool JSON text instead of native API tool_calls
       if (toolCalls.length === 0 && responseText.trim()) {
@@ -154,6 +170,46 @@ export class AgentLoop {
 
         const { name, arguments: args } = toolCall.function;
 
+        // Ignore empty/unparseable tool calls
+        if (!name || (name === 'write_file' && (!args || !args.path))) {
+          continue;
+        }
+
+        // Normalize path for tool signature duplicate checking
+        const normArgs = { ...args };
+        if (typeof normArgs.path === 'string') {
+          normArgs.path = path.resolve(normArgs.path).toLowerCase();
+        }
+        const signature = `${name}:${JSON.stringify(normArgs)}`;
+
+        // Duplicate tool call safeguard or repeated file modification check
+        const targetFilePath = typeof args.path === 'string' ? path.resolve(args.path).toLowerCase() : '';
+
+        if (
+          executedToolSignatures.has(signature) ||
+          ((name === 'write_file' || name === 'edit_file') && modifiedFiles.has(targetFilePath))
+        ) {
+          this.context.addMessage({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name,
+            content: '[System Safeguard]: Action already completed. Do not execute this tool call again. Write your summary and complete your response.',
+          });
+          this.isRunning = false;
+          this.callbacks.onComplete();
+          return;
+        }
+
+        executedToolSignatures.add(signature);
+        if (targetFilePath) {
+          modifiedFiles.add(targetFilePath);
+        }
+
+        // Backup file before write or edit operations for /undo support
+        if (this.undoManager && (name === 'write_file' || name === 'edit_file') && typeof args.path === 'string') {
+          await this.undoManager.backupFile(args.path);
+        }
+
         // Check if denied
         if (this.permissions.isDenied(name)) {
           this.context.addMessage({
@@ -174,9 +230,11 @@ export class AgentLoop {
               role: 'tool',
               tool_call_id: toolCall.id,
               name,
-              content: 'Permission denied by user.',
+              content: 'Permission denied by user. Do not attempt to run this tool again. Write your final answer.',
             });
-            continue;
+            this.isRunning = false;
+            this.callbacks.onComplete();
+            return;
           }
         } else {
           this.callbacks.onToolCall(name, args);

@@ -1,56 +1,102 @@
 # ⚡ Titao
 
-**Open-source CLI coding agent powered by local models via Ollama.**
+**Enterprise Open-Source CLI Coding Agent Powered by Local Models & Ollama**
 
-Titao brings the power of AI coding assistants like Claude Code to your terminal — running entirely on local models with zero cloud dependency, full privacy, and zero cost.
+Titao brings the autonomous coding experience of **Claude Code** and **Antigravity CLI** directly to your terminal. It runs 100% locally with zero telemetry, complete human-in-the-loop safety, Model Context Protocol (MCP) support, shell-script hook execution, AST symbol indexing, git safety rollback, and CI/CD GitHub Action integration.
 
-## Features
+---
 
-- 🤖 **Local-first** — Runs on Ollama with models like Qwen 2.5 Coder, DeepSeek, Codestral
-- 🔧 **Full tool system** — File read/write/edit, grep search, shell commands, git integration
-- 🖥️ **Beautiful terminal UI** — Streaming markdown, syntax highlighting, progress indicators
-- 🔒 **Permission system** — Approve file writes and commands, auto-approve reads
-- 🗺️ **Smart context** — Tree-sitter repo map gives the model codebase awareness
-- 📝 **Project memory** — TITAO.md persists project-specific instructions
+## 🌟 Key Features
 
-## Quick Start
+- 🤖 **Local-First & Multi-Provider**: Connects to **Ollama** (`qwen2.5-coder`, `deepseek-r1`), **OpenRouter**, **LM Studio**, **vLLM**, or **OpenAI**.
+- 💭 **Reasoning & Thinking UI**: Visualizes `<think>...</think>` step-by-step reasoning in a styled terminal tree view.
+- 🎨 **Red/Green Diff Preview**: Renders colorful unified diff previews before you approve any file edits.
+- 🛡️ **Human-in-the-Loop & /undo**: Auto-approves safe reads; prompts `[y/n/a(lways)]` for writes and commands. Use **`/undo`** to revert file edits instantly.
+- 🌳 **AST Symbol & Directory Repo Map**: Indexes workspace structure and extracts TypeScript/JavaScript/Python class, function, and type signatures automatically.
+- 🔌 **Model Context Protocol (MCP)**: Connects external MCP tool servers (PostgreSQL, GitHub/GitLab issue trackers) via JSON-RPC stdio.
+- 🪝 **Shell Hooks Engine**: Executes `.titao/hooks.json` scripts (`pre-edit`, `post-edit`, `pre-commit`) to enforce team linting and formatting rules.
+- 🤖 **Agent Teams & Subagents**: Spawns secondary background sub-agents for isolated research, test generation, or log analysis.
+- 🚀 **CI/CD Integration**: Run `titao ci` to generate `.github/workflows/titao-ci.yml` for automated PR reviews.
+- 📝 **Persistent Project Memory**: Reads `TITAO.md` across sessions for project-specific instructions and code style.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Install
-npm install -g titao
+# Clone & install dependencies
+cd titao
+npm install
 
-# Make sure Ollama is running with a coding model
-ollama pull qwen2.5-coder:32b
+# Build & link binary globally
+npm run build
+npm link
 
-# Start Titao
+# Run Titao globally from any directory
 titao
 ```
 
-## Usage
+---
+
+## 💻 CLI Usage & Commands
 
 ```bash
-# Interactive mode
+# Interactive REPL mode
 titao
 
-# Specify a model
-titao --model qwen2.5-coder:14b
+# Use a specific model
+titao --model qwen2.5-coder:7b
 
-# Single prompt (non-interactive)
-titao -p "Add error handling to the auth module"
+# Connect to cloud OpenRouter
+titao --provider openrouter --model qwen/qwen-2.5-coder-32b
 
-# List available models
+# Single batch prompt (non-interactive)
+titao -p "Review git status and summarize uncommitted changes"
+
+# Auto-approve mode (non-interactive CI)
+titao -p "Run unit tests" --auto-approve
+
+# List available Ollama models
 titao models
 
-# Initialize project memory
+# Initialize TITAO.md project memory
 titao init
+
+# Initialize GitHub Actions CI workflow
+titao ci
 ```
 
-## Requirements
+---
 
-- Node.js >= 20
-- [Ollama](https://ollama.com) installed and running
-- A coding model (recommended: `qwen2.5-coder:32b` or `devstral:24b`)
+## 💬 Slash Commands Reference
 
-## License
+Inside interactive mode:
+
+| Command | Description |
+|---|---|
+| `/help` | Show command help menu |
+| `/undo` | Revert the most recent file edit |
+| `/diff` | Show uncommitted git changes |
+| `/status` | Show git repository working tree status |
+| `/models` | List available models |
+| `/model <name>` | Switch active model dynamically |
+| `/provider <type>` | Switch LLM provider (`ollama`, `openrouter`, `lmstudio`, `vllm`, `openai`) |
+| `/clear` | Clear conversation context history |
+| `/usage` | Show token usage statistics |
+| `/exit` | Exit Titao REPL |
+
+---
+
+## 🧪 Testing
+
+Run the Vitest test suite:
+
+```bash
+npm run test:run
+```
+
+---
+
+## 📄 License
 
 MIT

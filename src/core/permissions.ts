@@ -60,15 +60,16 @@ export class PermissionManager {
       case 'view_file':
       case 'list_dir':
       case 'grep_search':
+      case 'semantic_search':
       case 'repo_map':
+      case 'git_status':
+      case 'git_diff':
         return 'reads';
       case 'write_file':
       case 'edit_file':
         return 'writes';
       case 'run_command':
         return 'commands';
-      case 'git_status':
-      case 'git_diff':
       case 'git_commit':
         return 'git';
       default:

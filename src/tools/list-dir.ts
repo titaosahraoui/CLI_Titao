@@ -12,10 +12,24 @@ export const listDirTool: Tool = {
   permission: 'read',
 
   async execute(args: Record<string, any>): Promise<ToolResult> {
-    const dirPath = path.resolve(args.path as string);
+    let targetPath = path.resolve(args.path as string);
+    let wasFileFallback = false;
+
+    // Check if targetPath is a file instead of a directory
+    try {
+      const pathStat = await stat(targetPath);
+      if (pathStat.isFile()) {
+        wasFileFallback = true;
+        targetPath = path.dirname(targetPath);
+      }
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        return { success: false, output: '', error: `Path not found: ${targetPath}` };
+      }
+    }
 
     try {
-      const entries = await readdir(dirPath, { withFileTypes: true });
+      const entries = await readdir(targetPath, { withFileTypes: true });
 
       // Filter out common noise
       const filtered = entries.filter(
@@ -30,7 +44,7 @@ export const listDirTool: Tool = {
         if (!a.isDirectory() && b.isDirectory()) return 1;
         return a.name.localeCompare(b.name);
       })) {
-        const fullPath = path.join(dirPath, entry.name);
+        const fullPath = path.join(targetPath, entry.name);
         if (entry.isDirectory()) {
           results.push(`📁 ${entry.name}/`);
         } else {
@@ -44,18 +58,19 @@ export const listDirTool: Tool = {
         }
       }
 
+      const prefix = wasFileFallback
+        ? `Note: '${args.path}' is a file. Listed parent directory '${targetPath}':\n`
+        : `Contents of ${targetPath}:\n`;
+
       if (results.length === 0) {
-        return { success: true, output: `Directory is empty: ${dirPath}` };
+        return { success: true, output: `${prefix}(Directory is empty)` };
       }
 
       return {
         success: true,
-        output: `Contents of ${dirPath}:\n${results.join('\n')}`,
+        output: `${prefix}${results.join('\n')}`,
       };
     } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        return { success: false, output: '', error: `Directory not found: ${dirPath}` };
-      }
       return { success: false, output: '', error: `Failed to list directory: ${err.message}` };
     }
   },

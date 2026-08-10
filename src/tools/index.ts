@@ -8,6 +8,7 @@ export { grepSearchTool } from './grep-search.js';
 export { runCommandTool } from './run-command.js';
 export { gitStatusTool, gitDiffTool, gitCommitTool } from './git.js';
 export { semanticSearchTool } from './semantic-search.js';
+export { githubCreateIssueTool, githubListIssuesTool } from './github.js';
 
 import { viewFileTool } from './view-file.js';
 import { writeFileTool } from './write-file.js';
@@ -17,6 +18,7 @@ import { grepSearchTool } from './grep-search.js';
 import { runCommandTool } from './run-command.js';
 import { gitStatusTool, gitDiffTool, gitCommitTool } from './git.js';
 import { semanticSearchTool } from './semantic-search.js';
+import { githubCreateIssueTool, githubListIssuesTool } from './github.js';
 import type { Tool } from './types.js';
 
 /** All built-in tools. */
@@ -31,4 +33,6 @@ export const allTools: Tool[] = [
   gitDiffTool,
   gitCommitTool,
   semanticSearchTool,
+  githubCreateIssueTool,
+  githubListIssuesTool,
 ];

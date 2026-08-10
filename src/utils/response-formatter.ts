@@ -34,6 +34,65 @@ export function renderTerminalMarkdown(markdownText: string): string {
   }
 }
 
+export interface ThrottledMarkdownRenderer {
+  push(markdownText: string): void;
+  flush(): void;
+  cancel(): void;
+}
+
+/**
+ * Buffer live markdown updates and render only the latest content at a fixed cadence.
+ * This avoids reparsing the full response on every streamed token.
+ */
+export function createThrottledMarkdownRenderer(
+  write: (renderedText: string) => void,
+  intervalMs = 50,
+): ThrottledMarkdownRenderer {
+  let latestMarkdown = '';
+  let hasPendingRender = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const renderLatest = (): void => {
+    timer = undefined;
+    if (!hasPendingRender) {
+      return;
+    }
+
+    hasPendingRender = false;
+    const rendered = renderTerminalMarkdown(latestMarkdown);
+    if (rendered) {
+      write(`\r${rendered}`);
+    }
+  };
+
+  return {
+    push(markdownText: string): void {
+      latestMarkdown = markdownText;
+      hasPendingRender = true;
+
+      if (!timer) {
+        timer = setTimeout(renderLatest, intervalMs);
+      }
+    },
+
+    flush(): void {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      renderLatest();
+    },
+
+    cancel(): void {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      hasPendingRender = false;
+    },
+  };
+}
+
 /**
  * Parses and separates thinking blocks (<think>...</think>) from response content.
  */
@@ -94,6 +153,7 @@ export function formatThinkingUI(thinkingText: string, durationSec = 1): string 
  * ● Bash(node scripts/publish.js)
  * ● Edit(src/app.ts)
  * ● View(src/core/config.ts)
+ * ● GitHubCreateIssue(title)
  */
 export function formatToolCallUI(name: string, args: Record<string, unknown>): string {
   let actionName = 'Tool';
@@ -136,6 +196,16 @@ export function formatToolCallUI(name: string, args: Record<string, unknown>): s
     case 'git_commit':
       actionName = 'GitCommit';
       mainArg = String(args.message ?? '');
+      break;
+    case 'github_create_issue':
+    case 'create_issue':
+      actionName = 'GitHubCreateIssue';
+      mainArg = String(args.title ?? '');
+      break;
+    case 'github_list_issues':
+    case 'list_issues':
+      actionName = 'GitHubListIssues';
+      mainArg = String(args.repo ?? '');
       break;
     default:
       actionName = name.charAt(0).toUpperCase() + name.slice(1);

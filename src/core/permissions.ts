@@ -64,9 +64,11 @@ export class PermissionManager {
       case 'repo_map':
       case 'git_status':
       case 'git_diff':
+      case 'github_list_issues':
         return 'reads';
       case 'write_file':
       case 'edit_file':
+      case 'github_create_issue':
         return 'writes';
       case 'run_command':
         return 'commands';

@@ -8,6 +8,12 @@ const CODE_INTENT_KEYWORDS = new Set([
   'refactor',
   'fix',
   'review',
+  'feedback',
+  'report',
+  'inspect',
+  'issue',
+  'issues',
+  'github',
   'build',
   'test',
   'edit',
@@ -60,7 +66,7 @@ export class ContextManager {
    * Assemble the full message array for the LLM, respecting token budget.
    * Uses Tiered Context Injection:
    * - Tier 1 (General prompts like "hi"): Lean system prompt (~250-350 tokens).
-   * - Tier 2 (Code tasks): Includes compact Repo Map & AST symbols.
+   * - Tier 2 (Code tasks & reviews): Includes compact Repo Map & AST symbols.
    */
   assembleMessages(): Message[] {
     const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');

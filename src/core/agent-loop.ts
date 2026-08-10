@@ -5,6 +5,7 @@ import type { ContextManager } from './context-manager.js';
 import type { PermissionManager } from './permissions.js';
 import type { UndoManager } from './undo-manager.js';
 import { parseToolCallsFromText } from '../providers/tool-call-parser.js';
+import { parseThinkingBlocks, formatThinkingUI } from '../utils/response-formatter.js';
 
 /** Callbacks for the agent loop to communicate with the UI. */
 export interface AgentCallbacks {
@@ -68,6 +69,7 @@ export class AgentLoop {
     this.context.addMessage({ role: 'user', content: userMessage });
 
     let turnCount = 0;
+    let emptyPromptRetries = 0;
     const executedToolSignatures = new Set<string>();
     const modifiedFiles = new Set<string>();
 
@@ -140,10 +142,25 @@ export class AgentLoop {
         }
       }
 
-      // Filter out echoed <tool_response> tags if present in text
-      const cleanResponseText = responseText
-        .replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, '')
-        .trim();
+      const { thinking, content } = parseThinkingBlocks(responseText);
+      let cleanResponseText = content.trim();
+
+      // If model produced unclosed thinking tags and NO tool calls, re-prompt model to execute actions
+      if (toolCalls.length === 0 && !cleanResponseText && thinking.length > 0 && emptyPromptRetries < 2) {
+        emptyPromptRetries++;
+        const thinkingSummary = thinking.join('\n');
+        this.callbacks.onStreamText(formatThinkingUI(thinkingSummary));
+
+        this.context.addMessage({
+          role: 'assistant',
+          content: `<think>${thinkingSummary}</think>`,
+        });
+        this.context.addMessage({
+          role: 'user',
+          content: '[System Safeguard]: You stopped inside your thinking block without executing any tool calls. Proceed immediately by calling the required tools (such as list_dir, view_file, or write_file).',
+        });
+        continue;
+      }
 
       // If no tool calls were generated, stream the clean conversational text to UI
       if (toolCalls.length === 0 && cleanResponseText) {
@@ -153,7 +170,7 @@ export class AgentLoop {
       // 3. Add assistant message to conversation
       this.context.addMessage({
         role: 'assistant',
-        content: cleanResponseText,
+        content: cleanResponseText || responseText,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
 

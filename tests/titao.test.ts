@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rm, mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -17,6 +17,8 @@ import { HooksEngine } from '../src/hooks/engine.js';
 import { generateGitHubWorkflow } from '../src/ci/workflow-generator.js';
 import { createProvider } from '../src/providers/provider-factory.js';
 import { buildSystemPrompt } from '../src/prompts/system.js';
+import { createThrottledMarkdownRenderer } from '../src/utils/response-formatter.js';
+import { extractGithubTokenFromHostsYaml } from '../src/tools/github.js';
 
 const TEST_DIR = path.resolve('./temp_test_env');
 
@@ -182,6 +184,61 @@ describe('⚡ Titao Core & Tool System Test Suite', () => {
       cm.updateTokenUsage({ promptTokens: 100, completionTokens: 50 });
       const usage = cm.getTokenUsage();
       expect(usage.total).toBe(150);
+    });
+  });
+
+  describe('GitHub Integration', () => {
+    it('categorizes GitHub issue tools by read/write behavior', () => {
+      const permissions = new PermissionManager();
+
+      expect(permissions.categorize('github_list_issues')).toBe('reads');
+      expect(permissions.categorize('github_create_issue')).toBe('writes');
+    });
+
+    it('extracts oauth_token from GitHub CLI hosts.yml', () => {
+      const hostsYaml = `github.com:
+  user: octocat
+  oauth_token: "gho_testtoken"
+  git_protocol: https
+`;
+
+      expect(extractGithubTokenFromHostsYaml(hostsYaml)).toBe('gho_testtoken');
+    });
+
+    it('extracts nested oauth_token from GitHub CLI hosts.yml', () => {
+      const hostsYaml = `github.com:
+  users:
+    octocat:
+      oauth_token: gho_nestedtoken
+`;
+
+      expect(extractGithubTokenFromHostsYaml(hostsYaml)).toBe('gho_nestedtoken');
+    });
+  });
+
+  describe('Response Formatter', () => {
+    it('throttles markdown rendering and flushes latest content', () => {
+      vi.useFakeTimers();
+      const writes: string[] = [];
+      const renderer = createThrottledMarkdownRenderer((text) => writes.push(text), 50);
+
+      renderer.push('first');
+      renderer.push('second');
+      expect(writes).toHaveLength(0);
+
+      vi.advanceTimersByTime(49);
+      expect(writes).toHaveLength(0);
+
+      vi.advanceTimersByTime(1);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain('second');
+
+      renderer.push('third');
+      renderer.flush();
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toContain('third');
+
+      vi.useRealTimers();
     });
   });
 });

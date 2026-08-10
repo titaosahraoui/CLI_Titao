@@ -20,6 +20,7 @@ import {
   parseThinkingBlocks,
   formatThinkingUI,
   renderTerminalMarkdown,
+  createThrottledMarkdownRenderer,
   formatToolCallUI,
   formatToolResultUI,
 } from './utils/response-formatter.js';
@@ -182,6 +183,10 @@ export async function startTitao(options: CLIOptions): Promise<void> {
       console.log('');
 
       let fullStreamedText = '';
+      const markdownRenderer = createThrottledMarkdownRenderer(
+        (rendered) => process.stdout.write(rendered),
+        50,
+      );
 
       const agentLoop = new AgentLoop({
         provider,
@@ -198,11 +203,11 @@ export async function startTitao(options: CLIOptions): Promise<void> {
 
             if (thinking.length > 0) {
               const latestThink = thinking[thinking.length - 1];
+              markdownRenderer.flush();
               process.stdout.write(formatThinkingUI(latestThink));
               fullStreamedText = content;
             } else if (content) {
-              const rendered = renderTerminalMarkdown(content);
-              process.stdout.write(`\r${rendered}`);
+              markdownRenderer.push(content);
             }
           },
           onToolCall: (name, args) => {
@@ -264,9 +269,11 @@ export async function startTitao(options: CLIOptions): Promise<void> {
             });
           },
           onComplete: () => {
+            markdownRenderer.flush();
             console.log('');
           },
           onError: (error) => {
+            markdownRenderer.cancel();
             console.error(chalk.red(`\n  ❌ Error: ${error.message}\n`));
           },
         },

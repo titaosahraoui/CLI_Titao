@@ -92,6 +92,53 @@ program
     console.log('✅ Created TITAO.md — edit it to give Titao persistent project memory.');
   });
 
+// Subcommand: MCP server management
+program
+  .command('mcp [server]')
+  .description('Configure MCP tool servers (e.g. titao mcp github)')
+  .action(async (server?: string) => {
+    const { writeFile, readFile, mkdir } = await import('fs/promises');
+    const { existsSync } = await import('fs');
+    const path = await import('path');
+
+    const mcpDir = path.join(process.cwd(), '.titao');
+    const mcpFile = path.join(mcpDir, 'mcp.json');
+
+    let currentConfig: any = { mcpServers: {} };
+    if (existsSync(mcpFile)) {
+      try {
+        const raw = await readFile(mcpFile, 'utf-8');
+        currentConfig = JSON.parse(raw);
+        if (!currentConfig.mcpServers) currentConfig.mcpServers = {};
+      } catch {
+        currentConfig = { mcpServers: {} };
+      }
+    }
+
+    if (!server || server.toLowerCase() === 'github') {
+      currentConfig.mcpServers.github = {
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        env: {
+          GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}',
+        },
+      };
+
+      if (!existsSync(mcpDir)) {
+        await mkdir(mcpDir, { recursive: true });
+      }
+
+      await writeFile(mcpFile, JSON.stringify(currentConfig, null, 2), 'utf-8');
+      console.log('\n✅ Configured GitHub MCP Server in .titao/mcp.json:');
+      console.log('   Command: npx -y @modelcontextprotocol/server-github');
+      console.log('   Token Env: GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN\n');
+      console.log('   Make sure GITHUB_TOKEN is set or run gh auth login before running Titao.');
+    } else {
+      console.log(`Configured MCP servers in ${mcpFile}:`);
+      console.log(JSON.stringify(currentConfig.mcpServers, null, 2));
+    }
+  });
+
 // Subcommand: CI workflow generator
 program
   .command('ci')

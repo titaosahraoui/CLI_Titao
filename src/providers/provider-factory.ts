@@ -20,6 +20,8 @@ export class GenericOpenAIProvider implements LLMProvider {
   private model: string;
   private contextSize: number;
   private providerName: string;
+  private maxRetryAttempts = 3;
+  private retryBaseDelayMs = 500;
 
   constructor(options: {
     baseURL: string;
@@ -37,17 +39,74 @@ export class GenericOpenAIProvider implements LLMProvider {
     });
   }
 
+  private getRetryDelayMs(attempt: number): number {
+    const exponentialDelay = this.retryBaseDelayMs * 2 ** attempt;
+    const jitter = Math.floor(Math.random() * 100);
+    return exponentialDelay + jitter;
+  }
+
+  private getErrorStatus(error: unknown): number | undefined {
+    if (typeof error !== 'object' || error === null) {
+      return undefined;
+    }
+
+    const maybeError = error as {
+      status?: unknown;
+      response?: { status?: unknown };
+    };
+
+    if (typeof maybeError.status === 'number') {
+      return maybeError.status;
+    }
+
+    if (typeof maybeError.response?.status === 'number') {
+      return maybeError.response.status;
+    }
+
+    return undefined;
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    const status = this.getErrorStatus(error);
+    if (status && [408, 409, 425, 429, 500, 502, 503, 504].includes(status)) {
+      return true;
+    }
+
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      const code = String((error as { code?: unknown }).code);
+      return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND'].includes(code);
+    }
+
+    return false;
+  }
+
+  private async withTransientRetries<T>(operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (attempt >= this.maxRetryAttempts || !this.isRetryableError(error)) {
+          throw error;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, this.getRetryDelayMs(attempt)));
+      }
+    }
+  }
+
   async *chat(params: ChatParams): AsyncIterable<StreamChunk> {
     try {
-      const stream = await this.client.chat.completions.create({
-        model: this.model,
-        messages: params.messages as OpenAI.ChatCompletionMessageParam[],
-        tools: params.tools?.length
-          ? (params.tools as OpenAI.ChatCompletionTool[])
-          : undefined,
-        stream: true,
-        temperature: params.temperature ?? 0.1,
-      });
+      const stream = await this.withTransientRetries(() =>
+        this.client.chat.completions.create({
+          model: this.model,
+          messages: params.messages as OpenAI.ChatCompletionMessageParam[],
+          tools: params.tools?.length
+            ? (params.tools as OpenAI.ChatCompletionTool[])
+            : undefined,
+          stream: true,
+          temperature: params.temperature ?? 0.1,
+        }),
+      );
 
       const toolCallAccumulator = new Map<
         number,
@@ -123,7 +182,7 @@ export class GenericOpenAIProvider implements LLMProvider {
 
   async listModels(): Promise<string[]> {
     try {
-      const resp = await this.client.models.list();
+      const resp = await this.withTransientRetries(() => this.client.models.list());
       return resp.data.map((m) => m.id).sort();
     } catch {
       return [this.model];
@@ -142,7 +201,7 @@ export class GenericOpenAIProvider implements LLMProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.client.models.list();
+      await this.withTransientRetries(() => this.client.models.list());
       return true;
     } catch {
       return false;

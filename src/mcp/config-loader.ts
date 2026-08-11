@@ -15,7 +15,10 @@ export interface McpConfigFile {
 export async function loadAndRegisterMcpServers(
   registry: ToolRegistry,
   cwd: string = process.cwd(),
+  options: { trusted?: boolean } = {},
 ): Promise<McpClient[]> {
+  if (options.trusted !== true) return [];
+
   const configFile = path.join(cwd, '.titao', 'mcp.json');
   if (!existsSync(configFile)) {
     return [];

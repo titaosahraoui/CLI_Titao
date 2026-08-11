@@ -12,6 +12,7 @@ import { AgentLoop } from './core/agent-loop.js';
 import { ContextManager } from './core/context-manager.js';
 import { PermissionManager } from './core/permissions.js';
 import { createExecutionPolicy } from './core/execution-policy.js';
+import { WorkspaceTrustStore } from './core/workspace-trust.js';
 import { UndoManager } from './core/undo-manager.js';
 import { HooksEngine } from './hooks/engine.js';
 import { loadAndRegisterMcpServers } from './mcp/config-loader.js';
@@ -93,7 +94,18 @@ export async function startTitao(options: CLIOptions): Promise<void> {
   // ── Set up tool registry & load MCP servers ────────────────────────
   const toolRegistry = new ToolRegistry();
   toolRegistry.registerAll(allTools);
-  const mcpClients = await loadAndRegisterMcpServers(toolRegistry, process.cwd());
+  const trustStore = new WorkspaceTrustStore();
+  const workspaceTrusted = await trustStore.isTrusted(process.cwd());
+  if (!workspaceTrusted) {
+    console.log(
+      chalk.yellow(
+        '  Repository hooks and MCP servers are disabled until this workspace is trusted.',
+      ),
+    );
+  }
+  const mcpClients = await loadAndRegisterMcpServers(toolRegistry, process.cwd(), {
+    trusted: workspaceTrusted,
+  });
   if (mcpClients.length > 0) {
     console.log(chalk.dim(`  🔌 Connected ${mcpClients.length} external MCP tool servers.`));
   }
@@ -107,7 +119,7 @@ export async function startTitao(options: CLIOptions): Promise<void> {
   const undoManager = new UndoManager();
   const hooksEngine = new HooksEngine(process.cwd());
   const costTracker = new CostTracker();
-  await hooksEngine.loadHooks();
+  if (workspaceTrusted) await hooksEngine.loadHooks();
 
   // ── Set up context manager ─────────────────────────────────────────
   const systemPrompt = buildSystemPrompt({
@@ -160,6 +172,7 @@ export async function startTitao(options: CLIOptions): Promise<void> {
       context,
       permissions,
       undoManager,
+      hooksEngine,
       config,
     );
     rl.close();
@@ -232,11 +245,6 @@ export async function startTitao(options: CLIOptions): Promise<void> {
             console.log(formatToolResultUI(name, output, success));
           },
           onRequestPermission: async (tool, args) => {
-            // Run pre-edit hooks before write or edit operations
-            if (tool === 'write_file' || tool === 'edit_file') {
-              await hooksEngine.runHooks('pre-edit', { TITAO_TOOL: tool });
-            }
-
             // Show red/green diff preview for write_file and edit_file
             if ((tool === 'write_file' || tool === 'edit_file') && typeof args.path === 'string') {
               const targetPath = path.resolve(args.path);
@@ -289,6 +297,9 @@ export async function startTitao(options: CLIOptions): Promise<void> {
               );
             });
           },
+          onBeforeToolExecute: (name) => runPreToolHooks(hooksEngine, name),
+          onAfterToolExecute: (name, _args, success) =>
+            runPostToolHooks(hooksEngine, name, success),
           onComplete: () => {
             markdownRenderer.flush();
             console.log('');
@@ -328,6 +339,7 @@ async function runSinglePrompt(
   context: ContextManager,
   permissions: PermissionManager,
   undoManager: UndoManager,
+  hooksEngine: HooksEngine,
   config: ReturnType<typeof resolveConfig>,
 ): Promise<void> {
   let responseAccumulator = '';
@@ -350,6 +362,8 @@ async function runSinglePrompt(
         console.log(formatToolResultUI(name, output, success));
       },
       onRequestPermission: async () => false,
+      onBeforeToolExecute: (name) => runPreToolHooks(hooksEngine, name),
+      onAfterToolExecute: (name, _args, success) => runPostToolHooks(hooksEngine, name, success),
       onComplete: () => {
         const { thinking, content } = parseThinkingBlocks(responseAccumulator);
         if (thinking.length > 0) {
@@ -374,6 +388,53 @@ async function runSinglePrompt(
   });
 
   await agentLoop.processUserMessage(prompt);
+}
+
+async function runPreToolHooks(
+  hooksEngine: HooksEngine,
+  toolName: string,
+): Promise<{ allowed: boolean; message?: string }> {
+  const event =
+    toolName === 'write_file' || toolName === 'edit_file'
+      ? 'pre-edit'
+      : toolName === 'git_commit'
+        ? 'pre-commit'
+        : undefined;
+  if (!event) return { allowed: true };
+
+  const results = await hooksEngine.runHooks(event, { TITAO_TOOL: toolName });
+  const failure = results.find((result) => !result.success);
+  if (!failure) return { allowed: true };
+  const detail = [failure.error, failure.output].filter(Boolean).join('\n');
+  return {
+    allowed: false,
+    message: `${event} hook '${failure.command}' failed${detail ? `:\n${detail}` : '.'}`,
+  };
+}
+
+async function runPostToolHooks(
+  hooksEngine: HooksEngine,
+  toolName: string,
+  success: boolean,
+): Promise<void> {
+  if (!success) return;
+  const event =
+    toolName === 'write_file' || toolName === 'edit_file'
+      ? 'post-edit'
+      : toolName === 'git_commit'
+        ? 'post-commit'
+        : undefined;
+  if (!event) return;
+
+  const results = await hooksEngine.runHooks(event, { TITAO_TOOL: toolName });
+  const failure = results.find((result) => !result.success);
+  if (failure) {
+    console.error(
+      chalk.yellow(
+        `  ${event} hook '${failure.command}' failed: ${failure.error ?? failure.output}`,
+      ),
+    );
+  }
 }
 
 /**

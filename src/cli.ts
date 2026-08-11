@@ -3,6 +3,7 @@ import { startTitao } from './app.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { generateGitHubWorkflow } from './ci/workflow-generator.js';
 import type { ProviderType } from './providers/provider-factory.js';
+import { inspectWorkspaceExecutionConfig, WorkspaceTrustStore } from './core/workspace-trust.js';
 
 /** CLI options parsed from command-line arguments. */
 export interface CLIOptions {
@@ -22,7 +23,11 @@ const program = new Command()
   .description('⚡ Titao — Open-source enterprise CLI coding agent')
   .version('0.1.0')
   .option('-m, --model <model>', 'LLM model to use', 'qwen2.5-coder:32b')
-  .option('--provider <provider>', 'LLM provider (ollama, openrouter, lmstudio, vllm, openai)', 'ollama')
+  .option(
+    '--provider <provider>',
+    'LLM provider (ollama, openrouter, lmstudio, vllm, openai)',
+    'ollama',
+  )
   .option('--host <url>', 'Provider host URL', 'http://localhost:11434')
   .option('--api-key <key>', 'API key for OpenRouter or OpenAI')
   .option('-c, --context <size>', 'Context window size in tokens', '32768')
@@ -139,6 +144,68 @@ program
     }
   });
 
+// Subcommand: repository execution trust
+program
+  .command('trust')
+  .description('Inspect or change trust for repository hooks and MCP servers')
+  .option('--grant', 'Trust the current hook and MCP configuration')
+  .option('--revoke', 'Revoke trust for the current workspace')
+  .option('--list', 'List trusted workspaces')
+  .action(async (options: { grant?: boolean; revoke?: boolean; list?: boolean }) => {
+    const selectedActions = [options.grant, options.revoke, options.list].filter(Boolean).length;
+    if (selectedActions > 1) {
+      throw new Error('Choose only one of --grant, --revoke, or --list.');
+    }
+
+    const store = new WorkspaceTrustStore();
+    if (options.list) {
+      const entries = await store.list();
+      if (entries.length === 0) {
+        console.log('No trusted workspaces.');
+        return;
+      }
+      for (const entry of entries) {
+        console.log(`${entry.canonicalRoot} (trusted ${entry.trustedAt})`);
+      }
+      return;
+    }
+
+    const root = process.cwd();
+    if (options.revoke) {
+      await store.revoke(root);
+      console.log(`Revoked repository execution trust for ${root}.`);
+      return;
+    }
+
+    const metadata = await inspectWorkspaceExecutionConfig(root);
+    printExecutionMetadata(metadata);
+
+    if (options.grant) {
+      const { createInterface } = await import('readline/promises');
+      const input = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const answer = await input.question(
+          'Trust these repository hooks and MCP commands until their configuration changes? [y/N] ',
+        );
+        if (!['y', 'yes'].includes(answer.trim().toLowerCase())) {
+          console.log('Trust was not granted.');
+          return;
+        }
+      } finally {
+        input.close();
+      }
+      const entry = await store.trust(root);
+      console.log(`Trusted ${entry.canonicalRoot} at ${entry.trustedAt}.`);
+      return;
+    }
+
+    console.log(
+      (await store.isTrusted(root))
+        ? 'Repository execution config is trusted.'
+        : 'Repository execution config is not trusted.',
+    );
+  });
+
 // Subcommand: CI workflow generator
 program
   .command('ci')
@@ -151,3 +218,24 @@ program
   });
 
 export { program };
+
+function printExecutionMetadata(
+  metadata: Awaited<ReturnType<typeof inspectWorkspaceExecutionConfig>>,
+): void {
+  console.log('Repository hooks:');
+  if (metadata.hooks.length === 0) console.log('  (none)');
+  for (const hook of metadata.hooks) {
+    console.log(`  ${hook.enabled ? 'enabled' : 'disabled'} ${hook.event}: ${hook.command}`);
+  }
+
+  console.log('Repository MCP servers:');
+  if (metadata.mcpServers.length === 0) console.log('  (none)');
+  for (const server of metadata.mcpServers) {
+    const command = [server.command, ...server.args].join(' ');
+    const environment =
+      server.environmentVariables.length > 0
+        ? `; environment names: ${server.environmentVariables.join(', ')}`
+        : '';
+    console.log(`  ${server.name}: ${command}${environment}`);
+  }
+}

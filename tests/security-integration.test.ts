@@ -1,26 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { AgentLoop } from '../src/core/agent-loop.js';
 import { ContextManager } from '../src/core/context-manager.js';
 import { PermissionManager } from '../src/core/permissions.js';
+import { createExecutionPolicy } from '../src/core/execution-policy.js';
 import type { LLMProvider, StreamChunk } from '../src/providers/types.js';
 import { ToolRegistry } from '../src/tools/registry.js';
+import { writeFileTool } from '../src/tools/write-file.js';
 import { loadAndRegisterMcpServers } from '../src/mcp/config-loader.js';
 import { McpClient } from '../src/mcp/client.js';
 
 const temporaryPaths: string[] = [];
+const originalCwd = process.cwd();
 
 afterEach(async () => {
+  process.chdir(originalCwd);
   vi.restoreAllMocks();
   await Promise.all(
     temporaryPaths.splice(0).map((entry) => rm(entry, { recursive: true, force: true })),
   );
 });
 
-function createToolCallingProvider(toolName: string): LLMProvider {
+function createToolCallingProvider(
+  toolName: string,
+  args: Record<string, unknown> = { path: 'target.txt' },
+): LLMProvider {
   let chatCount = 0;
   return {
     async *chat(): AsyncIterable<StreamChunk> {
@@ -31,7 +38,7 @@ function createToolCallingProvider(toolName: string): LLMProvider {
           toolCall: {
             id: 'call-1',
             type: 'function',
-            function: { name: toolName, arguments: { path: 'target.txt' } },
+            function: { name: toolName, arguments: args },
           },
         };
       } else {
@@ -48,6 +55,30 @@ function createToolCallingProvider(toolName: string): LLMProvider {
         parameterSize: '0',
         contextLength: 1024,
         supportsToolCalling: true,
+        family: 'test',
+      };
+    },
+    async isAvailable() {
+      return true;
+    },
+  };
+}
+
+function createTextProvider(text: string): LLMProvider {
+  return {
+    async *chat(): AsyncIterable<StreamChunk> {
+      yield { type: 'text', content: text };
+      yield { type: 'done' };
+    },
+    async listModels() {
+      return [];
+    },
+    async getModelInfo() {
+      return {
+        name: 'test',
+        parameterSize: '0',
+        contextLength: 1024,
+        supportsToolCalling: false,
         family: 'test',
       };
     },
@@ -172,5 +203,105 @@ describe('untrusted repository process boundary', () => {
 
     expect(clients).toEqual([]);
     expect(connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('end-to-end side-effect denial', () => {
+  it('keeps non-interactive execution read-only without explicit auto-approval', async () => {
+    let executions = 0;
+    const tools = new ToolRegistry();
+    tools.register({
+      name: 'write_file',
+      description: 'test write',
+      parameters: z.object({ path: z.string() }),
+      permission: 'write',
+      async execute() {
+        executions++;
+        return { success: true, output: 'written' };
+      },
+    });
+    const context = new ContextManager('test', 2048);
+    const loop = new AgentLoop({
+      provider: createToolCallingProvider('write_file'),
+      tools,
+      context,
+      permissions: new PermissionManager(
+        createExecutionPolicy({ interactive: false, autoApprove: false }),
+      ),
+      maxTurns: 2,
+      callbacks: createCallbacks(),
+    });
+
+    await loop.processUserMessage('write');
+
+    expect(executions).toBe(0);
+    expect(context.assembleMessages()).toContainEqual(
+      expect.objectContaining({
+        role: 'tool',
+        content: expect.stringMatching(/denied by permission policy/i),
+      }),
+    );
+  });
+
+  it('blocks an auto-approved write that targets outside the workspace', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'titao-secure-root-'));
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'titao-secure-outside-'));
+    temporaryPaths.push(root, outside);
+    const outsideFile = path.join(outside, 'escaped.txt');
+    process.chdir(root);
+    const tools = new ToolRegistry();
+    tools.register(writeFileTool);
+    const loop = new AgentLoop({
+      provider: createToolCallingProvider('write_file', {
+        path: path.relative(root, outsideFile),
+        content: 'unsafe',
+      }),
+      tools,
+      context: new ContextManager('test', 2048),
+      permissions: new PermissionManager(
+        createExecutionPolicy({ interactive: false, autoApprove: true }),
+      ),
+      maxTurns: 2,
+      callbacks: createCallbacks(),
+    });
+
+    await loop.processUserMessage('write outside');
+
+    await expect(access(outsideFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps a run_command JSON example as inert response prose', async () => {
+    let executions = 0;
+    let streamed = '';
+    const prose =
+      'Example:\n```json\n{"name":"run_command","arguments":{"command":"echo unsafe"}}\n```';
+    const tools = new ToolRegistry();
+    tools.register({
+      name: 'run_command',
+      description: 'test command',
+      parameters: z.object({ command: z.string() }),
+      permission: 'execute',
+      async execute() {
+        executions++;
+        return { success: true, output: 'ran' };
+      },
+    });
+    const loop = new AgentLoop({
+      provider: createTextProvider(prose),
+      tools,
+      context: new ContextManager('test', 2048),
+      permissions: new PermissionManager(PermissionManager.autoApproveAll()),
+      maxTurns: 1,
+      callbacks: createCallbacks({
+        onStreamText: (text: string) => {
+          streamed += text;
+        },
+      }),
+    });
+
+    await loop.processUserMessage('show an example');
+
+    expect(executions).toBe(0);
+    expect(streamed).toContain('run_command');
   });
 });

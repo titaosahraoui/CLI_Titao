@@ -10,7 +10,8 @@ import { generateDirectoryTree } from './tools/repo-map.js';
 import { generateSymbolMap } from './tools/ast-repo-map.js';
 import { AgentLoop } from './core/agent-loop.js';
 import { ContextManager } from './core/context-manager.js';
-import { PermissionManager, DEFAULT_PERMISSION_POLICY } from './core/permissions.js';
+import { PermissionManager } from './core/permissions.js';
+import { createExecutionPolicy } from './core/execution-policy.js';
 import { UndoManager } from './core/undo-manager.js';
 import { HooksEngine } from './hooks/engine.js';
 import { loadAndRegisterMcpServers } from './mcp/config-loader.js';
@@ -73,15 +74,12 @@ export async function startTitao(options: CLIOptions): Promise<void> {
 
       if (!modelExists) {
         const preferred =
-          availableModels.find((m) => m.includes('coder') || m.includes('qwen') || m.includes('deepseek')) ??
-          availableModels[0];
+          availableModels.find(
+            (m) => m.includes('coder') || m.includes('qwen') || m.includes('deepseek'),
+          ) ?? availableModels[0];
 
-        console.log(
-          chalk.yellow(`\n⚠️  Model '${config.model}' is not pulled in Ollama.`),
-        );
-        console.log(
-          chalk.green(`   Auto-switching to available model: '${preferred}'\n`),
-        );
+        console.log(chalk.yellow(`\n⚠️  Model '${config.model}' is not pulled in Ollama.`));
+        console.log(chalk.green(`   Auto-switching to available model: '${preferred}'\n`));
 
         config.model = preferred;
         provider = new OllamaProvider(config.ollamaHost, config.model, config.contextSize);
@@ -101,9 +99,10 @@ export async function startTitao(options: CLIOptions): Promise<void> {
   }
 
   // ── Set up permissions, hooks, cost tracker & undo manager ───────
-  const permissionPolicy = options.autoApprove
-    ? PermissionManager.autoApproveAll()
-    : DEFAULT_PERMISSION_POLICY;
+  const permissionPolicy = createExecutionPolicy({
+    interactive: !options.prompt,
+    autoApprove: options.autoApprove,
+  });
   const permissions = new PermissionManager(permissionPolicy);
   const undoManager = new UndoManager();
   const hooksEngine = new HooksEngine(process.cwd());
@@ -154,7 +153,15 @@ export async function startTitao(options: CLIOptions): Promise<void> {
 
   // ── Handle single prompt mode ──────────────────────────────────────
   if (options.prompt) {
-    await runSinglePrompt(options.prompt, provider, toolRegistry, context, permissions, undoManager, config);
+    await runSinglePrompt(
+      options.prompt,
+      provider,
+      toolRegistry,
+      context,
+      permissions,
+      undoManager,
+      config,
+    );
     rl.close();
     return;
   }
@@ -173,7 +180,15 @@ export async function startTitao(options: CLIOptions): Promise<void> {
 
       // Handle slash commands
       if (trimmed.startsWith('/')) {
-        const handled = await handleSlashCommand(trimmed, context, provider, undoManager, costTracker, config, rl);
+        const handled = await handleSlashCommand(
+          trimmed,
+          context,
+          provider,
+          undoManager,
+          costTracker,
+          config,
+          rl,
+        );
         if (handled !== 'exit') {
           promptForInput();
         }
@@ -238,7 +253,11 @@ export async function startTitao(options: CLIOptions): Promise<void> {
 
               if (tool === 'write_file' && typeof args.content === 'string') {
                 newContent = args.content;
-              } else if (tool === 'edit_file' && typeof args.search === 'string' && typeof args.replace === 'string') {
+              } else if (
+                tool === 'edit_file' &&
+                typeof args.search === 'string' &&
+                typeof args.replace === 'string'
+              ) {
                 newContent = oldContent.replace(args.search, args.replace);
               }
 
@@ -252,7 +271,9 @@ export async function startTitao(options: CLIOptions): Promise<void> {
                 .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
                 .join(', ');
               rl.question(
-                chalk.yellow(`  🔒 Permission Request: Allow ${chalk.bold(tool)}(${argsStr})? [y(yes)/n(no)/a(lways)] `),
+                chalk.yellow(
+                  `  🔒 Permission Request: Allow ${chalk.bold(tool)}(${argsStr})? [y(yes)/n(no)/a(lways)] `,
+                ),
                 async (answer) => {
                   const normalized = answer.trim().toLowerCase();
                   if (normalized === 'a' || normalized === 'always') {
@@ -309,15 +330,13 @@ async function runSinglePrompt(
   undoManager: UndoManager,
   config: ReturnType<typeof resolveConfig>,
 ): Promise<void> {
-  const autoPermissions = new PermissionManager(PermissionManager.autoApproveAll());
-
   let responseAccumulator = '';
 
   const agentLoop = new AgentLoop({
     provider,
     tools,
     context,
-    permissions: autoPermissions,
+    permissions,
     undoManager,
     maxTurns: config.maxTurns,
     callbacks: {
@@ -330,7 +349,7 @@ async function runSinglePrompt(
       onToolResult: (name, output, success) => {
         console.log(formatToolResultUI(name, output, success));
       },
-      onRequestPermission: async () => true,
+      onRequestPermission: async () => false,
       onComplete: () => {
         const { thinking, content } = parseThinkingBlocks(responseAccumulator);
         if (thinking.length > 0) {
@@ -341,7 +360,11 @@ async function runSinglePrompt(
         }
 
         const usage = context.getTokenUsage();
-        console.log(chalk.dim(`\n  📊 Token Usage: Prompt ${usage.prompt.toLocaleString()} | Completion ${usage.completion.toLocaleString()} | Total ${usage.total.toLocaleString()}`));
+        console.log(
+          chalk.dim(
+            `\n  📊 Token Usage: Prompt ${usage.prompt.toLocaleString()} | Completion ${usage.completion.toLocaleString()} | Total ${usage.total.toLocaleString()}`,
+          ),
+        );
       },
       onError: (error) => {
         console.error(chalk.red(`Error: ${error.message}`));
@@ -369,7 +392,8 @@ async function handleSlashCommand(
 
   switch (cmd.toLowerCase()) {
     case '/help':
-      console.log(chalk.dim(`
+      console.log(
+        chalk.dim(`
   ⚡ Titao Commands:
   ──────────────────
   /help            Show this help message
@@ -384,13 +408,18 @@ async function handleSlashCommand(
   /clear           Clear conversation history
   /usage           Show token usage statistics
   /exit            Exit Titao
-`));
+`),
+      );
       return 'continue';
 
     case '/compact': {
       const res = context.compactHistory();
       if (res.tokensSaved > 0) {
-        console.log(chalk.green(`\n  🧹 Compacted ${res.originalCount} messages! Saved ~${res.tokensSaved.toLocaleString()} tokens.\n`));
+        console.log(
+          chalk.green(
+            `\n  🧹 Compacted ${res.originalCount} messages! Saved ~${res.tokensSaved.toLocaleString()} tokens.\n`,
+          ),
+        );
       } else {
         console.log(chalk.yellow('\n  Context history is already compact.\n'));
       }
@@ -399,15 +428,22 @@ async function handleSlashCommand(
 
     case '/cost': {
       const usage = context.getTokenUsage();
-      const report = costTracker.calculateCost(config.model, config.provider, usage.prompt, usage.completion);
-      console.log(chalk.dim(`
+      const report = costTracker.calculateCost(
+        config.model,
+        config.provider,
+        usage.prompt,
+        usage.completion,
+      );
+      console.log(
+        chalk.dim(`
   💸 Cost & Speed Metrics:
   ────────────────────────
   Estimated Cost: $${report.estimatedCostUSD.toFixed(5)} USD
   Tokens / Sec:   ${report.averageTokensPerSec} t/s
   Prompt Tokens:  ${report.promptTokens.toLocaleString()}
   Completion:     ${report.completionTokens.toLocaleString()}
-`));
+`),
+      );
       return 'continue';
     }
 
@@ -454,7 +490,9 @@ async function handleSlashCommand(
 
       const models = await provider.listModels();
       const match = models.find(
-        (m) => m.toLowerCase() === targetModel.toLowerCase() || m.split(':')[0].toLowerCase() === targetModel.toLowerCase(),
+        (m) =>
+          m.toLowerCase() === targetModel.toLowerCase() ||
+          m.split(':')[0].toLowerCase() === targetModel.toLowerCase(),
       );
 
       const newModel = match ?? targetModel;
@@ -473,14 +511,16 @@ async function handleSlashCommand(
 
     case '/usage': {
       const usage = context.getTokenUsage();
-      console.log(chalk.dim(`
+      console.log(
+        chalk.dim(`
   📊 Token Usage:
   ──────────────
   Prompt:     ${usage.prompt.toLocaleString()} tokens
   Completion: ${usage.completion.toLocaleString()} tokens
   Total:      ${usage.total.toLocaleString()} tokens
   Messages:   ${context.getMessageCount()}
-`));
+`),
+      );
       return 'continue';
     }
 
@@ -490,7 +530,9 @@ async function handleSlashCommand(
       return 'exit';
 
     default:
-      console.log(chalk.dim(`  Unknown command: ${commandLine}. Type /help for available commands.\n`));
+      console.log(
+        chalk.dim(`  Unknown command: ${commandLine}. Type /help for available commands.\n`),
+      );
       return 'continue';
   }
 }
@@ -498,16 +540,23 @@ async function handleSlashCommand(
 /**
  * Print the Titao welcome banner.
  */
-function printBanner(model: string, contextSize: number, availableModels: string[], providerName: string): void {
+function printBanner(
+  model: string,
+  contextSize: number,
+  availableModels: string[],
+  providerName: string,
+): void {
   console.log('');
   console.log(
     chalk.bold.cyan('  ⚡ Titao') +
-    chalk.dim(` v0.1.0 · provider:`) +
-    chalk.cyan.bold(` ${providerName}`) +
-    chalk.dim(` · model:`) +
-    chalk.cyan.bold(` ${model}`) +
-    chalk.dim(` · ctx:${contextSize.toLocaleString()}`),
+      chalk.dim(` v0.1.0 · provider:`) +
+      chalk.cyan.bold(` ${providerName}`) +
+      chalk.dim(` · model:`) +
+      chalk.cyan.bold(` ${model}`) +
+      chalk.dim(` · ctx:${contextSize.toLocaleString()}`),
   );
-  console.log(chalk.dim(`  Connected to ${providerName} (${availableModels.length} models available)`));
+  console.log(
+    chalk.dim(`  Connected to ${providerName} (${availableModels.length} models available)`),
+  );
   console.log(chalk.dim('  ────────────────────────────────────────────────'));
 }

@@ -4,15 +4,10 @@ import os from 'os';
  * Build the system prompt for Titao.
  * Optimized for local models: concise, clear instructions that smaller models follow reliably.
  */
-export function buildSystemPrompt(config: {
-  cwd: string;
-  model: string;
-  shell?: string;
-}): string {
+export function buildSystemPrompt(config: { cwd: string; model: string; shell?: string }): string {
   const platform = os.platform();
   const shell = config.shell ?? (platform === 'win32' ? 'PowerShell' : 'bash');
-  const osName =
-    platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'macOS' : 'Linux';
+  const osName = platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'macOS' : 'Linux';
 
   return `You are Titao, an autonomous AI coding assistant running locally on the user's computer.
 You help developers write, debug, refactor, inspect, and understand code in their project directory.
@@ -31,6 +26,7 @@ You help developers write, debug, refactor, inspect, and understand code in thei
 6. When asked to review code, generate feedback, or inspect the project, ALWAYS execute \`list_dir\` or \`view_file\` to analyze the files first, and \`write_file\` to save the markdown report if requested.
 7. When asked to create or list GitHub issues, use \`github_create_issue\` or \`github_list_issues\`.
 8. When asked to "review code and create issues on github if there are any", view the target file, identify bugs or architectural improvements, and IMMEDIATELY invoke \`github_create_issue\` for each issue found.
+9. If native tool calling is unavailable, emit exactly one fallback block as <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>. Never place examples or explanatory prose inside a tool_call block.
 
 ## Environment
 - OS: ${osName}

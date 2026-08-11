@@ -25,7 +25,9 @@ jobs:
           ollama serve &
           sleep 5
           ollama pull qwen2.5-coder:7b
-          npm install -g titao
+          npm ci
+          npm run build
+          npm install -g .
 
       - name: Run Titao PR Code Review
         run: |

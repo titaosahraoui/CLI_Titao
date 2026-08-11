@@ -27,7 +27,10 @@ function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * Fetch embedding vector from Ollama API.
  */
-async function fetchEmbedding(text: string, host = 'http://localhost:11434'): Promise<number[] | null> {
+async function fetchEmbedding(
+  text: string,
+  host = 'http://localhost:11434',
+): Promise<number[] | null> {
   try {
     const resp = await fetch(`${host}/api/embeddings`, {
       method: 'POST',
@@ -48,10 +51,17 @@ async function fetchEmbedding(text: string, host = 'http://localhost:11434'): Pr
 
 export const semanticSearchTool: Tool = {
   name: 'semantic_search',
-  description: 'Perform semantic vector similarity search across workspace code using local embeddings.',
+  description:
+    'Perform semantic vector similarity search across workspace code using local embeddings.',
   parameters: z.object({
     query: z.string().describe('Natural language query describing what code concept to search for'),
-    maxResults: z.number().optional().describe('Maximum number of matching snippets to return (default: 5)'),
+    maxResults: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe('Maximum number of matching snippets to return (default: 5)'),
   }),
   permission: 'read',
 
@@ -66,7 +76,8 @@ export const semanticSearchTool: Tool = {
         return {
           success: false,
           output: '',
-          error: 'Local embedding model nomic-embed-text not available in Ollama. Run: ollama pull nomic-embed-text',
+          error:
+            'Local embedding model nomic-embed-text not available in Ollama. Run: ollama pull nomic-embed-text',
         };
       }
 
@@ -78,7 +89,8 @@ export const semanticSearchTool: Tool = {
         if (chunks.length >= 200) return;
         const entries = await readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
-          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist')
+            continue;
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
             await scanDir(fullPath);

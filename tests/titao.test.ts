@@ -127,6 +127,16 @@ describe('⚡ Titao Core & Tool System Test Suite', () => {
       const content = await readFile(res.filePath, 'utf-8');
       expect(content).toContain('Titao AI Code Review');
     });
+
+    it('installs the checked-out CLI instead of requiring a published npm package', async () => {
+      const res = await generateGitHubWorkflow(TEST_DIR);
+
+      const content = await readFile(res.filePath, 'utf-8');
+      expect(content).toContain('npm ci');
+      expect(content).toContain('npm run build');
+      expect(content).toContain('npm install -g .');
+      expect(content).not.toContain('npm install -g titao');
+    });
   });
 
   describe('Multi-Provider Factory', () => {

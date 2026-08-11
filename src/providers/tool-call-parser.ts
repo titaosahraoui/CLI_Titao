@@ -1,91 +1,47 @@
 import type { ToolCall } from './types.js';
 
-/**
- * Extracts tool calls from response text if the model printed tool calls
- * as raw JSON or XML text blocks rather than native OpenAI API structs.
- * Uses balanced bracket parsing to handle nested JSON objects properly.
- */
+const TOOL_CALL_BLOCK = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
+
+/** Extract explicitly delimited fallback calls from providers without native tool calling. */
 export function parseToolCallsFromText(
   text: string,
   availableTools: string[],
 ): { text: string; toolCalls: ToolCall[] } {
   const toolCalls: ToolCall[] = [];
-  let cleanText = text;
+  const withoutParsedBlocks = text.replace(TOOL_CALL_BLOCK, (block, payload: string) => {
+    try {
+      const parsed: unknown = JSON.parse(payload);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return block;
+      const candidate = parsed as Record<string, unknown>;
+      const args = candidate.arguments;
+      if (
+        typeof candidate.name !== 'string' ||
+        !availableTools.includes(candidate.name) ||
+        args === null ||
+        typeof args !== 'object' ||
+        Array.isArray(args)
+      ) {
+        return block;
+      }
 
-  let idx = 0;
-  while ((idx = text.indexOf('{', idx)) !== -1) {
-    let depth = 0;
-    let endIdx = -1;
-    let inString = false;
-    let escape = false;
-
-    for (let i = idx; i < text.length; i++) {
-      const char = text[i];
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (char === '\\') {
-        escape = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (!inString) {
-        if (char === '{') depth++;
-        else if (char === '}') {
-          depth--;
-          if (depth === 0) {
-            endIdx = i;
-            break;
-          }
-        }
-      }
+      toolCalls.push({
+        id: `text_call_${Date.now()}_${toolCalls.length}`,
+        type: 'function',
+        function: {
+          name: candidate.name,
+          arguments: args as Record<string, unknown>,
+        },
+      });
+      return '';
+    } catch {
+      return block;
     }
+  });
 
-    if (endIdx !== -1) {
-      const jsonCandidate = text.slice(idx, endIdx + 1);
-      try {
-        const parsed = JSON.parse(jsonCandidate);
-        const toolName =
-          parsed.name ?? parsed.function ?? parsed.action ?? parsed.tool;
-        const toolArgs =
-          parsed.arguments ?? parsed.parameters ?? parsed.action_input ?? parsed.args ?? {};
-
-        if (
-          toolName &&
-          typeof toolName === 'string' &&
-          availableTools.includes(toolName)
-        ) {
-          toolCalls.push({
-            id: `text_call_${Date.now()}_${toolCalls.length}`,
-            type: 'function',
-            function: {
-              name: toolName,
-              arguments: typeof toolArgs === 'object' ? toolArgs : { input: toolArgs },
-            },
-          });
-
-          cleanText = cleanText.replace(jsonCandidate, '').trim();
-          idx = endIdx + 1;
-          continue;
-        }
-      } catch {
-        // Ignore non-JSON or non-tool objects
-      }
-    }
-    idx++;
-  }
-
-  // Strip markdown code block wrappers
-  cleanText = cleanText
-    .replace(/```json/gi, '')
-    .replace(/```/g, '')
-    .trim();
-
-  return { text: cleanText, toolCalls };
+  return {
+    text: toolCalls.length > 0 ? withoutParsedBlocks.trim() : text,
+    toolCalls,
+  };
 }
 
 /**

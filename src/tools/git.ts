@@ -1,12 +1,15 @@
 import { z } from 'zod';
 import { simpleGit } from 'simple-git';
+import path from 'path';
 import type { Tool, ToolResult } from './types.js';
+import { resolveWithinWorkspace } from '../core/workspace-boundary.js';
 
 const git = simpleGit(process.cwd());
 
 export const gitStatusTool: Tool = {
   name: 'git_status',
-  description: 'Show working tree status (modified files, staged files, untracked files, current branch).',
+  description:
+    'Show working tree status (modified files, staged files, untracked files, current branch).',
   parameters: z.object({}),
   permission: 'read',
 
@@ -48,7 +51,10 @@ export const gitDiffTool: Tool = {
   description: 'Show git diff of uncommitted changes in the repository.',
   parameters: z.object({
     path: z.string().optional().describe('Specific file path to show diff for'),
-    staged: z.boolean().optional().describe('Show staged diff instead of unstaged (default: false)'),
+    staged: z
+      .boolean()
+      .optional()
+      .describe('Show staged diff instead of unstaged (default: false)'),
   }),
   permission: 'read',
 
@@ -61,7 +67,10 @@ export const gitDiffTool: Tool = {
 
       const options: string[] = [];
       if (args.staged) options.push('--staged');
-      if (typeof args.path === 'string' && args.path.trim()) options.push(args.path.trim());
+      if (typeof args.path === 'string' && args.path.trim()) {
+        const safePath = await resolveWithinWorkspace(process.cwd(), args.path.trim(), 'read');
+        options.push('--', path.relative(process.cwd(), safePath));
+      }
 
       const diff = await git.diff(options);
       if (!diff || !diff.trim()) {
@@ -86,7 +95,10 @@ export const gitCommitTool: Tool = {
   description: 'Stage modified files and create a git commit with a message.',
   parameters: z.object({
     message: z.string().describe('Commit message'),
-    all: z.boolean().optional().describe('Stage all modified and deleted files before committing (default: true)'),
+    all: z
+      .boolean()
+      .optional()
+      .describe('Stage all modified and deleted files before committing (default: true)'),
   }),
   permission: 'write',
 

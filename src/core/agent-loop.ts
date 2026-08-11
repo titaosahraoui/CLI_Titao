@@ -17,6 +17,17 @@ export interface AgentCallbacks {
   onToolResult: (name: string, result: string, success: boolean) => void;
   /** Called when a tool requires user permission. Returns true if approved. */
   onRequestPermission: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** Called after permission approval and immediately before a tool executes. */
+  onBeforeToolExecute?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ allowed: boolean; message?: string }>;
+  /** Called after a tool has executed. */
+  onAfterToolExecute?: (
+    name: string,
+    args: Record<string, unknown>,
+    success: boolean,
+  ) => Promise<void>;
   /** Called when the agent loop finishes processing. */
   onComplete: () => void;
   /** Called when an error occurs. */
@@ -109,7 +120,10 @@ export class AgentLoop {
             case 'done':
               // If LLM API returned usage stats, update them
               if (chunk.usage && chunk.usage.completionTokens) {
-                this.context.updateTokenUsage({ promptTokens: 0, completionTokens: chunk.usage.completionTokens });
+                this.context.updateTokenUsage({
+                  promptTokens: 0,
+                  completionTokens: chunk.usage.completionTokens,
+                });
               }
               break;
             case 'error':
@@ -119,9 +133,7 @@ export class AgentLoop {
           }
         }
       } catch (error) {
-        this.callbacks.onError(
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
         this.isRunning = false;
         return;
       }
@@ -132,10 +144,7 @@ export class AgentLoop {
 
       // 2b. Fallback parsing: if model output raw tool JSON text instead of native API tool_calls
       if (toolCalls.length === 0 && responseText.trim()) {
-        const fallback = parseToolCallsFromText(
-          responseText,
-          this.tools.getToolNames(),
-        );
+        const fallback = parseToolCallsFromText(responseText, this.tools.getToolNames());
         if (fallback.toolCalls.length > 0) {
           toolCalls.push(...fallback.toolCalls);
           responseText = fallback.text;
@@ -146,7 +155,12 @@ export class AgentLoop {
       let cleanResponseText = content.trim();
 
       // If model produced unclosed thinking tags and NO tool calls, re-prompt model to execute actions
-      if (toolCalls.length === 0 && !cleanResponseText && thinking.length > 0 && emptyPromptRetries < 2) {
+      if (
+        toolCalls.length === 0 &&
+        !cleanResponseText &&
+        thinking.length > 0 &&
+        emptyPromptRetries < 2
+      ) {
         emptyPromptRetries++;
         const thinkingSummary = thinking.join('\n');
         this.callbacks.onStreamText(formatThinkingUI(thinkingSummary));
@@ -157,7 +171,8 @@ export class AgentLoop {
         });
         this.context.addMessage({
           role: 'user',
-          content: '[System Safeguard]: You stopped inside your thinking block without executing any tool calls. Proceed immediately by calling the required tools (such as list_dir, view_file, or write_file).',
+          content:
+            '[System Safeguard]: You stopped inside your thinking block without executing any tool calls. Proceed immediately by calling the required tools (such as list_dir, view_file, or write_file).',
         });
         continue;
       }
@@ -200,7 +215,8 @@ export class AgentLoop {
         const signature = `${name}:${JSON.stringify(normArgs)}`;
 
         // Duplicate tool call safeguard or repeated file modification check
-        const targetFilePath = typeof args.path === 'string' ? path.resolve(args.path).toLowerCase() : '';
+        const targetFilePath =
+          typeof args.path === 'string' ? path.resolve(args.path).toLowerCase() : '';
 
         if (
           executedToolSignatures.has(signature) ||
@@ -210,7 +226,8 @@ export class AgentLoop {
             role: 'tool',
             tool_call_id: toolCall.id,
             name,
-            content: '[System Safeguard]: Action already completed. Do not execute this tool call again. Write your summary and complete your response.',
+            content:
+              '[System Safeguard]: Action already completed. Do not execute this tool call again. Write your summary and complete your response.',
           });
           this.isRunning = false;
           this.callbacks.onComplete();
@@ -220,11 +237,6 @@ export class AgentLoop {
         executedToolSignatures.add(signature);
         if (targetFilePath) {
           modifiedFiles.add(targetFilePath);
-        }
-
-        // Backup file before write or edit operations for /undo support
-        if (this.undoManager && (name === 'write_file' || name === 'edit_file') && typeof args.path === 'string') {
-          await this.undoManager.backupFile(args.path);
         }
 
         // Check if denied
@@ -247,7 +259,8 @@ export class AgentLoop {
               role: 'tool',
               tool_call_id: toolCall.id,
               name,
-              content: 'Permission denied by user. Do not attempt to run this tool again. Write your final answer.',
+              content:
+                'Permission denied by user. Do not attempt to run this tool again. Write your final answer.',
             });
             this.isRunning = false;
             this.callbacks.onComplete();
@@ -257,9 +270,32 @@ export class AgentLoop {
           this.callbacks.onToolCall(name, args);
         }
 
+        const lifecycleDecision = await this.callbacks.onBeforeToolExecute?.(name, args);
+        if (lifecycleDecision && !lifecycleDecision.allowed) {
+          const message = lifecycleDecision.message ?? `Tool '${name}' blocked before execution.`;
+          this.callbacks.onToolResult(name, message, false);
+          this.context.addMessage({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name,
+            content: message,
+          });
+          continue;
+        }
+
+        // Backup only after policy and lifecycle checks pass.
+        if (
+          this.undoManager &&
+          (name === 'write_file' || name === 'edit_file') &&
+          typeof args.path === 'string'
+        ) {
+          await this.undoManager.backupFile(args.path);
+        }
+
         // Execute the tool
         const result = await this.tools.execute(name, args);
         this.callbacks.onToolResult(name, result.output, result.success);
+        await this.callbacks.onAfterToolExecute?.(name, args, result.success);
 
         // Add tool result to conversation
         const outputText = result.success ? result.output : `Error: ${result.error}`;

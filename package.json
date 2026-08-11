@@ -13,6 +13,7 @@
     "build:binary": "bun build src/index.ts --compile --outfile titao",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:security": "vitest run tests/workspace-boundary.test.ts tests/execution-policy.test.ts tests/workspace-trust.test.ts tests/tool-call-parser.test.ts tests/security-integration.test.ts",
     "lint": "eslint src/",
     "format": "prettier --write src/"
   },
@@ -21,7 +22,7 @@
     "cli-highlight": "^2.1.0",
     "commander": "^12.0.0",
     "conf": "^13.0.0",
-    "diff": "^7.0.0",
+    "diff": "^9.0.0",
     "glob": "^11.0.0",
     "gpt-tokenizer": "^3.4.0",
     "ignore": "^6.0.0",
@@ -36,14 +37,14 @@
     "zod-to-json-schema": "^3.23.0"
   },
   "devDependencies": {
-    "@types/diff": "^7.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "eslint": "^9.0.0",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.0.0"
+    "vite": "^6.4.3",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=20.0.0"

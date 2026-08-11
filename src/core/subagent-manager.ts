@@ -1,6 +1,7 @@
 import { AgentLoop } from './agent-loop.js';
 import { ContextManager } from './context-manager.js';
 import { PermissionManager } from './permissions.js';
+import type { PermissionPolicy } from './permissions.js';
 import type { LLMProvider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { buildSystemPrompt } from '../prompts/system.js';
@@ -10,6 +11,7 @@ export interface SubagentOptions {
   taskPrompt: string;
   provider: LLMProvider;
   tools: ToolRegistry;
+  permissionPolicy: PermissionPolicy;
   cwd?: string;
   maxTurns?: number;
 }
@@ -38,7 +40,7 @@ export class SubagentManager {
     })}\n\n## SUBAGENT ROLE\nYou are a specialized sub-agent running in an isolated sub-context for the role: '${options.role}'. Complete the requested task efficiently and provide a clean, comprehensive summary.`;
 
     const subContext = new ContextManager(subSystemPrompt, 32768);
-    const subPermissions = new PermissionManager(PermissionManager.autoApproveAll());
+    const subPermissions = new PermissionManager(options.permissionPolicy);
 
     let resultOutput = '';
     let isSuccess = true;
@@ -55,7 +57,7 @@ export class SubagentManager {
         },
         onToolCall: () => {},
         onToolResult: () => {},
-        onRequestPermission: async () => true,
+        onRequestPermission: async () => false,
         onComplete: () => {},
         onError: (err) => {
           isSuccess = false;

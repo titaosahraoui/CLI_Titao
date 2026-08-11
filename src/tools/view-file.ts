@@ -1,12 +1,7 @@
 import { z } from 'zod';
 import { readFile, stat } from 'fs/promises';
-import path from 'path';
 import type { Tool, ToolResult } from './types.js';
-
-function resolveProjectPath(inputPath: string): string {
-  const cleaned = inputPath.trim().replace(/^[/\\]+/, '');
-  return path.resolve(process.cwd(), cleaned);
-}
+import { resolveWithinWorkspace } from '../core/workspace-boundary.js';
 
 export const viewFileTool: Tool = {
   name: 'view_file',
@@ -14,18 +9,23 @@ export const viewFileTool: Tool = {
     'View the contents of a file. Returns line-numbered content. Use startLine/endLine to view specific sections of large files.',
   parameters: z.object({
     path: z.string().describe('Path to the file to view'),
-    startLine: z.number().optional().describe('Start line number (1-indexed, inclusive)'),
-    endLine: z.number().optional().describe('End line number (1-indexed, inclusive)'),
+    startLine: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe('Start line number (1-indexed, inclusive)'),
+    endLine: z.number().int().min(1).optional().describe('End line number (1-indexed, inclusive)'),
   }),
   permission: 'read',
 
   async execute(args: Record<string, any>): Promise<ToolResult> {
     const rawPath = args.path as string;
-    const filePath = resolveProjectPath(rawPath);
     const startLine = args.startLine as number | undefined;
     const endLine = args.endLine as number | undefined;
 
     try {
+      const filePath = await resolveWithinWorkspace(process.cwd(), rawPath, 'read');
       const stats = await stat(filePath);
       if (stats.size > 5 * 1024 * 1024) {
         return {
@@ -59,7 +59,7 @@ export const viewFileTool: Tool = {
       return { success: true, output: `${header}\n${output}${footer}` };
     } catch (err: any) {
       if (err.code === 'ENOENT') {
-        return { success: false, output: '', error: `File not found: ${filePath} (resolved from '${rawPath}')` };
+        return { success: false, output: '', error: `File not found: ${rawPath}` };
       }
       return { success: false, output: '', error: `Failed to read file: ${err.message}` };
     }

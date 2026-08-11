@@ -2,18 +2,26 @@ import { z } from 'zod';
 import { readdir, stat } from 'fs/promises';
 import path from 'path';
 import type { Tool, ToolResult } from './types.js';
+import { resolveWithinWorkspace } from '../core/workspace-boundary.js';
 
 export const listDirTool: Tool = {
   name: 'list_dir',
-  description: 'List the contents of a directory, showing files and subdirectories with their sizes.',
+  description:
+    'List the contents of a directory, showing files and subdirectories with their sizes.',
   parameters: z.object({
     path: z.string().describe('Path to the directory to list').default('.'),
   }),
   permission: 'read',
 
   async execute(args: Record<string, any>): Promise<ToolResult> {
-    let targetPath = path.resolve(args.path as string);
+    let targetPath: string;
     let wasFileFallback = false;
+
+    try {
+      targetPath = await resolveWithinWorkspace(process.cwd(), args.path as string, 'read');
+    } catch (err: any) {
+      return { success: false, output: '', error: `Failed to list directory: ${err.message}` };
+    }
 
     // Check if targetPath is a file instead of a directory
     try {

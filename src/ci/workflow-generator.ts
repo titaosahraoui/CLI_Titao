@@ -5,7 +5,9 @@ import path from 'path';
 /**
  * Generates GitHub Actions CI/CD workflow for automated Titao PR reviews & bug fixing.
  */
-export async function generateGitHubWorkflow(cwd: string = process.cwd()): Promise<{ success: boolean; filePath: string }> {
+export async function generateGitHubWorkflow(
+  cwd: string = process.cwd(),
+): Promise<{ success: boolean; filePath: string }> {
   const workflowDir = path.join(cwd, '.github', 'workflows');
   const workflowFile = path.join(workflowDir, 'titao-ci.yml');
 
@@ -40,7 +42,9 @@ jobs:
           ollama serve &
           sleep 5
           ollama pull qwen2.5-coder:7b
-          npm install -g titao
+          npm ci
+          npm run build
+          npm install -g .
 
       - name: Run Titao PR Code Review
         run: |

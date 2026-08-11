@@ -7,3 +7,5 @@ export { DEFAULT_CONFIG, resolveConfig, loadProjectMemory } from './config.js';
 export type { TitaoConfig } from './config.js';
 export { UndoManager } from './undo-manager.js';
 export type { FileSnapshot } from './undo-manager.js';
+export { resolveWithinWorkspace } from './workspace-boundary.js';
+export type { WorkspaceAccessMode } from './workspace-boundary.js';
